@@ -29,6 +29,82 @@ full application source is private and available to reviewers on request.
 
 ---
 
+## AI in RepComet
+
+RepComet uses AI where it saves a small business owner real time, and keeps a person in charge of everything that
+goes public. Two features use a large language model (Anthropic's Claude), behind one small, testable seam.
+
+| Feature | What it does | Who sees the output |
+|---|---|---|
+| **AI reply drafts** | Writes a reply to a Google review in the business's voice: thanks the reviewer, and for a review of 3 stars or fewer, apologises for the specific problem and invites them to get in touch. | The owner only. They edit it, copy it and post it on Google themselves. |
+| **AI review insights** | Reads the last 90 days of Google reviews and private feedback and returns a summary, what customers love, what keeps coming up and what to do next. | The owner, on the Insights page (Growth and Pro plans). |
+
+```mermaid
+flowchart LR
+    R["New Google review<br/>(synced from Places)"] --> A["Owner alerted<br/>(low ratings first)"]
+    A --> D["Draft with AI<br/>(Claude, house rules)"]
+    D --> E["Owner reads and edits"]
+    E --> C["Copy reply & open Google"]
+    C --> G["Owner posts on Google<br/>then marks it posted"]
+```
+
+### One seam, one model
+
+All AI calls go through a single interface, `TextGenerator` (`generate(system, prompt, maxTokens, effort)`), with one
+production implementation on the official Anthropic PHP SDK and a fake for tests. The model is set in config
+(currently Claude Opus 5, `claude-opus-5`). Swapping models or providers touches one class.
+
+- **Effort is sized to the job.** Reply drafts use low effort with up to 4,000 output tokens; insights use medium
+  effort with up to 8,000.
+- **Failures are ordinary.** A 60 second timeout and two retries. Rate limits, API errors and refusals all come back
+  as "no result", and the owner sees a plain "try again in a minute" instead of an error page.
+- **Off unless configured.** With no API key, the "Draft with AI" button and the insights refresh simply do not
+  appear.
+
+### Guardrails
+
+- **No auto-posting, ever.** RepComet never publishes anything to Google. Every draft is copied and posted by the
+  owner, who stays responsible for what goes out under the business's name.
+- **The same compliance rules as the rest of the product.** The drafting instructions forbid offering money, discounts
+  or gifts in connection with a review, asking anyone to change or remove a review, and asking anyone for a review
+  or a rating. That matches the product's no-review-gating rule.
+- **Nothing it was not told.** Drafts may only respond to what the reviewer wrote: no prices, addresses, job details,
+  other customers or private information. They use the reviewer's first name only, and only when Google provides one.
+- **Less data in.** Insights send only review text, star ratings and private feedback text. Customer names, phone
+  numbers and email addresses are not sent, and the instructions forbid naming or quoting individual customers.
+- **Checked on the way out.** Every response is cleaned to the house style (for example, no em dashes or wrapping
+  quotes). Insights must come back as a JSON object, which is parsed defensively: missing parts become empty, and
+  text that is not JSON becomes the summary rather than an error.
+
+### Cost control
+
+- Every call records its own cost in millionths of a dollar, from the input and output token counts and the model's
+  list price (set in config), next to the tenant's other usage, so AI spend per business is always visible.
+- **Allowances per plan:** Solo includes 30 AI reply drafts a month. Growth and Pro are unlimited in practice but held
+  to a fair-use ceiling of 1,000 a month, so a runaway script cannot run up a bill.
+- **Insights refresh at most once a day,** and only once there are at least 3 reviews or comments to read.
+- Drafts stop when a trial or plan has ended, with a clear reason.
+
+### Tested without calling the API
+
+The test suite binds the fake generator, so no test ever calls a live model or needs a key. Seven focused tests cover:
+
+- house-style cleaning, and metering with cost;
+- the Solo monthly allowance;
+- no key meaning no button and a clear message;
+- the review editor filling in the draft;
+- insights JSON parsing and the once-a-day refresh;
+- the minimum-feedback and plan rules;
+- tenant isolation of insights.
+
+They run on every pull request in CI with the rest of the suite.
+
+> RepComet's website chat comes from a sister product, Chattiv, whose optional AI assistant answers visitors from
+> the business's own content and hands off to a person. Its case study is at
+> [nvitguru/chattiv-casestudy](https://github.com/nvitguru/chattiv-casestudy).
+
+---
+
 ## The product
 
 <p align="center">
